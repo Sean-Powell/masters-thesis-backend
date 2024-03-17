@@ -1,0 +1,9 @@
+version=0.1
+[default]
+[default.deploy.parameters]
+stack_name = "masters-thesis-backend"
+resolve_s3 = true
+s3_prefix = "masters-thesis-backend"
+region = "eu-central-1"
+capabilities = "CAPABILITY_IAM"
+disable_rollback = false

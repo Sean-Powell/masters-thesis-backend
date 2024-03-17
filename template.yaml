@@ -1,0 +1,678 @@
+Transform: AWS::Serverless-2016-10-31
+Parameters:
+  SliceSize:
+    Default: 50
+    Type: Number
+  CognitoClientSecretName:
+    Default: 'master-thesis-client'
+    Type: String
+
+
+Globals:
+  Api:
+    # enable CORS; to make more specific, change the origin wildcard
+    # to a particular domain name, e.g. "'www.example.com'"
+    Cors:
+      AllowMethods: "'*'"
+      AllowHeaders: "'*'"
+      AllowOrigin: "'*'"
+
+Resources:
+  LoginGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub
+        - ${ResourceName} From Stack ${AWS::StackName}
+        - ResourceName: BackendGateway
+      StageName: Prod
+      Cors:
+        AllowMethods: "'*'"
+        AllowOrigin: "'*'"
+        AllowHeaders: "'*'"
+      DefinitionBody:
+        openapi: '3.0'
+        info: {}
+        paths:
+          /login:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LoginFunction.Arn}/invocations
+          /refresh-auth:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RefreshAuthFunction.Arn}/invocations
+          /user:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserFunction.Arn}/invocations
+              responses: {}
+          /change-password:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ChangePasswordFunction.Arn}/invocations
+
+  BackendGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub
+        - ${ResourceName} From Stack ${AWS::StackName}
+        - ResourceName: BackendGateway
+      StageName: Prod
+      Cors:
+        AllowCredentials: false
+        AllowMethods: "'*'"
+        AllowOrigin: "'*'"
+        AllowHeaders: "'*'"
+      DefinitionBody:
+        openapi: '3.0'
+        info: {}
+        paths:
+          /survey-result:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SurveyResultFunction.Arn}/invocations
+              responses: {}
+          /result:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StoreResultFunction.Arn}/invocations
+              responses: {}
+          /next-image:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetNextImageFunction.Arn}/invocations
+              responses: {}
+          /survey-status:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetSurveyStatusFunction.Arn}/invocations
+              responses: {}
+      Auth:
+        DefaultAuthorizer: MyCognitoAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          MyCognitoAuthorizer:
+            IdentitySource: method.request.header.Authorization
+            UserPoolArn: !GetAtt UserPool.Arn
+
+  ChangePasswordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: ChangePasswordFunction
+      CodeUri: src/change-password
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          COGNITO_CLIENT_SECRET_NAME: !Ref CognitoClientSecretName
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - arn:aws:secretsmanager:eu-central-1:309171779279:secret:master-thesis-client-5pG4jF
+        - Statement:
+          - Effect: Allow
+            Action:
+              - cognito-idp:RespondToAuthChallenge
+            Resource: !GetAtt UserPool.Arn
+      Events:
+        BackendGatewayPUTsurveyresult:
+          Type: Api
+          Properties:
+            Path: /change-password
+            Method: POST
+            RestApiId: !Ref LoginGateway
+  ChangePasswordFunctionFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ChangePasswordFunction}
+
+  LoginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: LoginFunction
+      CodeUri: src/user-login
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          COGNITO_CLIENT_SECRET_NAME: !Ref CognitoClientSecretName
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - arn:aws:secretsmanager:eu-central-1:309171779279:secret:master-thesis-client-5pG4jF
+        - Statement:
+          - Effect: Allow
+            Action:
+              - cognito-idp:InitiateAuth
+              - cognito-idp:GetUser
+            Resource: !GetAtt UserPool.Arn
+      Events:
+        BackendGatewayPUTsurveyresult:
+          Type: Api
+          Properties:
+            Path: /login
+            Method: POST
+            RestApiId: !Ref LoginGateway
+  LoginFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${LoginFunction}
+
+  RefreshAuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: RefreshAuthFunction
+      CodeUri: src/refresh-auth
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          COGNITO_CLIENT_SECRET_NAME: !Ref CognitoClientSecretName
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - arn:aws:secretsmanager:eu-central-1:309171779279:secret:master-thesis-client-5pG4jF
+        - Statement:
+          - Effect: Allow
+            Action:
+              - cognito-idp:InitiateAuth
+            Resource: !GetAtt UserPool.Arn
+      Events:
+        BackendGatewayPUTsurveyresult:
+          Type: Api
+          Properties:
+            Path: /refresh-auth
+            Method: POST
+            RestApiId: !Ref LoginGateway
+  RefreshAuthFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${RefreshAuthFunction}
+
+  ForgotPasswordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: ForgotPasswordFunction
+      CodeUri: src/forgot-password
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          COGNITO_CLIENT_SECRET_NAME: !Ref CognitoClientSecretName
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - arn:aws:secretsmanager:eu-central-1:309171779279:secret:master-thesis-client-5pG4jF
+        - Statement:
+          - Effect: Allow
+            Action:
+              - cognito-idp:ForgotPassword
+            Resource: !GetAtt UserPool.Arn
+      Events:
+        BackendGatewayPUTsurveyresult:
+          Type: Api
+          Properties:
+            Path: /forgot-password
+            Method: POST
+            RestApiId: !Ref LoginGateway
+  ForgotPasswordFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ForgotPasswordFunction}
+
+  SurveyResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: SurveyResultFunction
+      CodeUri: src/save-survey-result
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          SURVEYTABLE_TABLE_NAME: !Ref SurveyTable
+          SURVEYTABLE_TABLE_ARN: !GetAtt SurveyTable.Arn
+          SURVEYBUCKET_BUCKET_NAME: !Ref SurveyBucket
+          SURVEYBUCKET_BUCKET_ARN: !GetAtt SurveyBucket.Arn
+          USERTABLE_TABLE_NAME: !Ref UserTable
+          USERTABLE_TABLE_ARN: !GetAtt UserTable.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SurveyTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:*
+              Resource:
+                - !Sub arn:${AWS::Partition}:s3:::${SurveyBucket}
+                - !Sub arn:${AWS::Partition}:s3:::${SurveyBucket}/*
+      Events:
+        BackendGatewayPUTsurveyresult:
+          Type: Api
+          Properties:
+            Path: /survey-result
+            Method: POST
+            RestApiId: !Ref BackendGateway
+
+  SurveyResultFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SurveyResultFunction}
+  StoreResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: StoreResultFunction
+      CodeUri: src/save-result-data
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          RESULTTABLE_TABLE_NAME: !Ref ResultTable
+          RESULTTABLE_TABLE_ARN: !GetAtt ResultTable.Arn
+          RESULTBUCKET_BUCKET_NAME: !Ref ResultBucket
+          RESULTBUCKET_BUCKET_ARN: !GetAtt ResultBucket.Arn
+          USERTABLE_TABLE_NAME: !Ref UserTable
+          USERTABLE_TABLE_ARN: !GetAtt UserTable.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:*
+              Resource:
+                - !Sub arn:${AWS::Partition}:s3:::${ResultBucket}
+                - !Sub arn:${AWS::Partition}:s3:::${ResultBucket}/*
+      Events:
+        BackendGatewayPUTresult:
+          Type: Api
+          Properties:
+            Path: /result
+            Method: POST
+            RestApiId: !Ref BackendGateway
+  StoreResultFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${StoreResultFunction}
+  UserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: UserFunction
+      CodeUri: src/user-function
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          SLICE_SIZE: !Ref SliceSize
+          USERTABLE_TABLE_NAME: !Ref UserTable
+          USERTABLE_TABLE_ARN: !GetAtt UserTable.Arn
+          USERPOOL_USER_POOL_ID: !Ref UserPool
+          USERPOOL_USER_POOL_ARN: !GetAtt UserPool.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:Admin*
+                - cognito-idp:DescribeIdentityProvider
+                - cognito-idp:DescribeResourceServer
+                - cognito-idp:DescribeUserPool
+                - cognito-idp:DescribeUserPoolClient
+                - cognito-idp:DescribeUserPoolDomain
+                - cognito-idp:GetGroup
+                - cognito-idp:ListGroups
+                - cognito-idp:ListUserPoolClients
+                - cognito-idp:ListUsers
+                - cognito-idp:ListUsersInGroup
+                - cognito-idp:UpdateGroup
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        BackendGatewayGETuser:
+          Type: Api
+          Properties:
+            Path: /user
+            Method: POST
+            RestApiId: !Ref LoginGateway
+  UserFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${UserFunction}
+  GetNextImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: GetNextImageFunction
+      CodeUri: src/get-next-image
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          USERTABLE_TABLE_NAME: !Ref UserTable
+          USERTABLE_TABLE_ARN: !GetAtt UserTable.Arn
+          IMAGEBUCKET_BUCKET_NAME: !Ref ImageBucket
+          IMAGEBUCKET_BUCKET_ARN: !GetAtt ImageBucket.Arn
+          IMAGETABLE_TABLE_NAME: !Ref ImageTable
+          IMAGETABLE_TABLE_ARN: !GetAtt ImageTable.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ImageTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:*
+              Resource:
+                - !Sub arn:${AWS::Partition}:s3:::${ImageBucket}
+                - !Sub arn:${AWS::Partition}:s3:::${ImageBucket}/*
+      Events:
+        BackendGatewayGETnextimage:
+          Type: Api
+          Properties:
+            Path: /next-image
+            Method: POST
+            RestApiId: !Ref BackendGateway
+  GetNextImageFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetNextImageFunction}
+  GetSurveyStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: GetSurveyStatusFunction
+      CodeUri: src/get-survey-status
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 512
+      Timeout: 30
+      Tracing: Active
+      Environment:
+        Variables:
+          USERTABLE_TABLE_NAME: !Ref UserTable
+          USERTABLE_TABLE_ARN: !GetAtt UserTable.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserTable
+      Events:
+        BackendGatewayGETnextimage:
+          Type: Api
+          Properties:
+            Path: /survey-status
+            Method: POST
+            RestApiId: !Ref BackendGateway
+  GetSurveyStatusFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetSurveyStatusFunction}
+  IndexImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: IndexImageFunction
+      CodeUri: src/index-images
+      Handler: app.handler
+      Runtime: nodejs18.x
+      MemorySize: 2048
+      Timeout: 900
+      ReservedConcurrentExecutions: 1
+      Tracing: Active
+      Environment:
+        Variables:
+          IMAGEBUCKET_BUCKET_NAME: !Ref ImageBucket
+          IMAGEBUCKET_BUCKET_ARN: !GetAtt ImageBucket.Arn
+          IMAGETABLE_TABLE_NAME: !Ref ImageTable
+          IMAGETABLE_TABLE_ARN: !GetAtt ImageTable.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:*
+              Resource:
+                - !Sub arn:${AWS::Partition}:s3:::${ImageBucket}
+                - !Sub arn:${AWS::Partition}:s3:::${ImageBucket}/*
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ImageTable
+  IndexImageFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${IndexImageFunction}
+  
+  ImageTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: ImageId
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: ImageId
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+  UserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: UUID
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: UUID
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+  ResultTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: UUIID
+          AttributeType: S
+        - AttributeName: ImageId
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: UUIID
+          KeyType: HASH
+        - AttributeName: ImageId
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+  SurveyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: UUID
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: UUID
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  ResultBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-resultbuc-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: alias/aws/s3
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  ResultBucketBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ResultBucket
+      PolicyDocument:
+        Id: RequireEncryptionInTransit
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: '*'
+            Effect: Deny
+            Resource:
+              - !GetAtt ResultBucket.Arn
+              - !Sub ${ResultBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  SurveyBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-surveybuc-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: alias/aws/s3
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  SurveyBucketBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SurveyBucket
+      PolicyDocument:
+        Id: RequireEncryptionInTransit
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: '*'
+            Effect: Deny
+            Resource:
+              - !GetAtt SurveyBucket.Arn
+              - !Sub ${SurveyBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  ImageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-imagebuck-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: alias/aws/s3
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  ImageBucketBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBucket
+      PolicyDocument:
+        Id: RequireEncryptionInTransit
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: '*'
+            Effect: Deny
+            Resource:
+              - !GetAtt ImageBucket.Arn
+              - !Sub ${ImageBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+        
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      UsernameAttributes:
+        - "email"
+      Schema:
+        - Name: UUID
+          AttributeDataType: String
+          Required: false
+          Mutable: false
+      UserPoolName: !Sub ${AWS::StackName}-UserPool
+
