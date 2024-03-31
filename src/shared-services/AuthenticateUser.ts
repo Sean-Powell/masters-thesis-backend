@@ -41,7 +41,7 @@ export async function AuthenticateUser(username: string, passowrd: string) {
         if (error.code == "NotAuthorizedException"){
             return createErrorResponse(401, "Incorrect username or password");
         }else if (error.code == "TooManyRequestsException"){
-            return createErrorResponse(401, "too many requests");
+            return createErrorResponse(429, "too many requests");
         }else if (error.code == "PasswordResetRequiredException"){
             return createErrorResponse(201, "Password reset is required");
         }
